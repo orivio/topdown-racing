@@ -1,0 +1,635 @@
+###### REUSE , can also reuse vectors, movement (+ physics including acceleration / drag), collisions, etc. 
+###### keep in mind in a scrolling game there's the relative physics (relative to the constant speed at which the scrolling occurs)
+
+import pygame
+import random
+import math
+import sys
+
+pygame.init()
+pygame.font.init()
+font = pygame.font.SysFont(None, 36)
+
+WIDTH, HEIGHT = 800, 700
+screen = pygame.display.set_mode((WIDTH, HEIGHT))
+pygame.display.set_caption("my first pygame!")
+clock = pygame.time.Clock()
+
+circles = []
+bullets = []
+moons = []
+ufos = []
+
+
+E = 0.9 # elasticity
+num = 3 # start number
+dnum = 200 #increase chance
+CONSUME_RANGE = 50 #how close
+startHP = 100
+s = 2 #speed magnitude
+plrHex = "cyan" # player colour
+DETECTION_RANGE = 300
+FOV_THRESHOLD = .6
+
+shoot_cooldown = 0
+missile_cooldown = 0 
+score = 0
+upgrades = 0
+
+
+#circle class
+class Circle:
+    def __init__(self, x, y, rad, red, green, blue, countdown, dx=None, dy=None):
+        self.x = x
+        self.y = y
+        self.rad = rad
+        self.mass = rad**2
+        self.red = red
+        self.green = green
+        self.blue = blue
+        # velocity takes on random (for spawning) if no parameter passed
+        self.dx = random.uniform(-1*s, s) if dx is None else dx
+        self.dy = random.uniform(-1*s, s) if dy is None else dy
+        self.countdown = countdown
+    
+    def move(self):
+        self.dx *= 0.995
+        self.dy *= 0.995
+        self.x += self.dx
+        self.y += self.dy
+        self.countdown -= 1
+    
+    def small_clone(self, dx=None, dy=None):
+        if self.rad < 10:
+            return None
+        # velocity from self if not explicitly overridden
+        use_dx = self.dx if dx is None else dx
+        use_dy = self.dy if dy is None else dy
+        return Circle(self.x, self.y, self.rad * 0.7, self.red, self.green, self.blue, self.countdown, use_dx, use_dy)
+    
+    def draw(self):
+        color = (int(self.red), int(self.green), int(self.blue))
+        pygame.draw.circle(screen, color, (int(self.x), int(self.y)), self.rad)
+
+# bullet class
+class Bullet:
+    def __init__(self, x, y, tx, ty, angle_offset=0, bulletsize = 4):
+        self.x = x
+        self.y = y
+        self.health = 1 + (bulletsize - 4)/2.0
+        angle = math.atan2(ty - y, tx - x) + angle_offset
+        speed = 10
+        self.dx = math.cos(angle) * speed
+        self.dy = math.sin(angle) * speed
+        self.rad = bulletsize
+
+    def move(self):
+        self.x += self.dx
+        self.y += self.dy
+
+    def draw(self):
+        pygame.draw.circle(screen, (255, 255, 0), (int(self.x), int(self.y)), self.rad)
+
+class Missile:
+    def __init__(self, x, y, tx, ty):
+        self.x = x
+        self.y = y
+        self.rad = 8 # bigger than starting bullets
+        self.health = 1
+        self.angle = 0.0
+        # "Distance, Magnitude, and Vector Normalization" (classwork)
+        self.speed = 0.2
+        self.dx = 0
+        self.dy = 0
+        self.ax = 0
+        self.ay = 0
+
+    def move(self):
+        dx = (pygame.mouse.get_pos()[0] - self.x)
+        dy = pygame.mouse.get_pos()[1] - self.y
+        
+        mag = math.sqrt(dx**2 + dy**2)
+        if mag != 0:
+            nx = dx /mag
+            ny = dy /mag
+        else:
+            nx, ny = 0, 0
+        self.dx += nx*self.speed/2
+        self.dy += ny*self.speed/2
+        
+        self.dx *= 0.99
+        self.dy *= 0.99
+        
+        self.x += self.dx
+        self.y += self.dy
+
+    def draw(self):
+        # missiles are orange
+        pygame.draw.circle(screen, (255, 120, 0), (int(self.x), int(self.y)), self.rad)
+
+class MoonAsteroid(Circle):
+    def __init__(self, player):
+        super().__init__(player.rect.centerx, player.rect.centery, 16, 180, 220, 255, 0)
+        self.dist = random.randint(50, 100)
+        self.angle = random.uniform(0, math.tau)
+        self.rot_speed = random.choice([-0.03, 0.03])
+        self.hp = 10
+
+    def update_orbit(self, px, py):
+        self.angle += self.rot_speed
+        self.x = px + math.cos(self.angle) * self.dist
+        self.y = py + math.sin(self.angle) * self.dist
+
+class UFO:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+        self.angle = random.randint(0,360)
+        self.speed = .5
+        self.turn_speed = 0.01
+        self.rad = 20 
+        self.shoot_cooldown = 120
+        self.hp = 30
+        self.detect = False
+
+    def update(self, player, circles_list):
+        target_angle = math.atan2(player.rect.centery - self.y, player.rect.centerx - self.x)
+        angle_diff = (target_angle - self.angle + math.pi) % math.tau - math.pi
+        
+        dx = player.rect.centerx - self.x
+        dy = player.rect.centery - self.y
+        dist = math.hypot(dx, dy)
+        if dist > 0:
+            dot = (dx / dist) * math.cos(self.angle) + (dy / dist) * math.sin(self.angle)
+            self.detect = False
+            if dist < DETECTION_RANGE and dot > FOV_THRESHOLD:
+                self.detect = True
+            
+        if self.detect:
+            
+            if angle_diff > self.turn_speed:
+                self.angle += self.turn_speed
+            elif angle_diff < -self.turn_speed:
+                self.angle -= self.turn_speed
+            else:
+                self.angle = target_angle
+        
+
+        self.x += math.cos(self.angle) * self.speed
+        self.y += math.sin(self.angle) * self.speed
+
+        self.shoot_cooldown -= 1
+        if self.shoot_cooldown <= 0:
+            self.shoot_cooldown = 100
+            dx = math.cos(self.angle) * 6
+            dy = math.sin(self.angle) * 6
+            circles_list.append(Circle(self.x, self.y, 6, 255, 50, 50, 2, dx, dy))
+
+    def draw(self):
+        p1 = (self.x + math.cos(self.angle) * self.rad, self.y + math.sin(self.angle) * self.rad)
+        p2 = (self.x + math.cos(self.angle + 2.5) * self.rad, self.y + math.sin(self.angle + 2.5) * self.rad)
+        p3 = (self.x + math.cos(self.angle - 2.5) * self.rad, self.y + math.sin(self.angle - 2.5) * self.rad)
+        pygame.draw.polygon(screen, (200, 50, 255), [p1, p2, p3])
+
+
+progress = .3
+def grant_powerup(player, chance, is_reroll = False):
+    # upgrade chance
+    x1 = 60
+    x2 = WIDTH - 60
+    y1 = 100
+    y2 = HEIGHT - 100
+    pygame.draw.rect(screen, (10, 25, 110), (x1,y1,x2-x1,y2-y1))
+
+    upgrades =    ["50 Health", "Bulletsize", "Shot Speed", "Extra Shot", "Protective Moon", "100 HP", "Reroll"]
+    current_upgrades = []
+
+    for i in range(3):
+        current_upgrades.append(upgrades[random.randint(0,6)])
+
+    pygame.draw.rect(screen, (85, 25, 100), (x1 + 30,y1 + 100,180,y2-y1-200))
+    screen.blit(font.render(current_upgrades[0], True, (255, 255, 255)), (x1 + 40, y1 + 200))
+
+    pygame.draw.rect(screen, (85, 25, 100), (WIDTH/2-90,y1 + 100,180,y2-y1-200))
+    screen.blit(font.render(current_upgrades[1], True, (255, 255, 255)), (WIDTH/2 - 80, y1 + 200))
+    
+    pygame.draw.rect(screen, (85, 25, 100), (x2 - 210,y1 + 100,180,y2-y1-200))
+    screen.blit(font.render(current_upgrades[2], True, (255, 255, 255)), (x2 - 200, y1 + 200))
+
+    pygame.display.flip()
+
+    waiting = True
+    while waiting:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                sys.exit()
+                
+            if event.type == pygame.MOUSEBUTTONDOWN:
+                mouse_x, mouse_y = event.pos
+                if (mouse_y < y2 - 100 and mouse_y > y1+100):
+                    waiting = False
+            
+    upgrade_chosen = current_upgrades[min(int(mouse_x / WIDTH * 3),2)]
+
+    if upgrade_chosen == "100 HP":
+        player.health += 100          # 100 health (40%)
+    elif upgrade_chosen == "Bulletsize":
+        player.bulletsize += 1
+    elif upgrade_chosen == "Shot Speed":
+        player.cooldown_max = max(4, player.cooldown_max - 20)  # increase firing speed (20%)
+    elif upgrade_chosen == "Extra Shot":
+        player.spread += 1          # spread shot (+1) (10%)
+    elif upgrade_chosen == "50 Health":
+        player.health += 50         # 50 health (10%)
+    elif upgrade_chosen == "Protective Moon":
+        moons.append(MoonAsteroid(player))  # moon (10%)
+    else:
+        return grant_powerup(player, chance, True)
+    if not is_reroll:
+        return chance*.9
+    return chance
+
+class Player(pygame.sprite.Sprite):
+    def __init__(self, x, y, WASD):
+        super().__init__()
+        self.wasd = WASD
+        self.x = x
+        self.y = y
+        self.dx = 0
+        self.dy = 0
+        self.angle = -math.pi / 2
+        self.rect = pygame.Rect(x, y, 32, 48)
+        self.rect.center = (x, y)
+        self.health = startHP
+        self.cooldown_max = 100  # starts slow
+        self.spread = 1          # single shot start
+        self.bulletsize = 4
+
+    def update(self, plats):
+        k = pygame.key.get_pressed()
+        # move
+        if k[pygame.K_LEFT] and not self.wasd or k[pygame.K_a] and self.wasd:
+            self.angle -= 0.1
+        if k[pygame.K_RIGHT] and not self.wasd or k[pygame.K_d] and self.wasd:
+            self.angle += 0.1
+        if (k[pygame.K_UP] and not self.wasd or k[pygame.K_w] and self.wasd):
+            self.dx += math.cos(self.angle) * 0.02
+            self.dy += math.sin(self.angle) * 0.02
+
+        self.dx *= 0.99
+        self.dy *= 0.99
+
+        self.x += self.dx
+        self.y += self.dy
+        
+        self.rect.centerx = int(self.x)
+        self.rect.centery = int(self.y)
+
+        # wall collisions
+        if self.rect.left < 0:
+            self.rect.left = 0
+            self.x = self.rect.centerx
+            self.dx = 0
+        if self.rect.right > WIDTH:
+            self.rect.right = WIDTH
+            self.x = self.rect.centerx
+            self.dx = 0
+        if self.rect.top < 0:
+            self.rect.top = 0
+            self.y = self.rect.centery
+            self.dy = 0
+        # basic floor collision
+        if self.rect.bottom >= HEIGHT:
+            self.rect.bottom = HEIGHT
+            self.y = self.rect.centery
+            self.dy = 0
+
+    def draw(self):
+        p1 = (self.x + math.cos(self.angle) * 24, self.y + math.sin(self.angle) * 24)
+        p2 = (self.x + math.cos(self.angle + 2.5) * 20, self.y + math.sin(self.angle + 2.5) * 20)
+        p3 = (self.x + math.cos(self.angle - 2.5) * 20, self.y + math.sin(self.angle - 2.5) * 20)
+        pygame.draw.polygon(screen, pygame.Color(plrHex), [p1, p2, p3])
+
+def newCircle():
+    rtlb = random.randint(0,3)
+    n = random.randint(1, 10)
+    hp = 1
+    rad = random.randint(8, 25)
+    x = random.randint(rad, WIDTH)
+    y = random.randint(rad, HEIGHT)
+    dy = random.uniform(-1*s,s)
+    dx = random.uniform(-1*s,s)
+    if rtlb % 2 == 0:
+        if rtlb == 0:
+            x = WIDTH
+            dx = random.uniform(-1*s,0)
+        else:
+            x = 0
+            dx = random.uniform(0,s)
+    elif rtlb == 1:
+        y = 0
+        dy = random.uniform(0,s)
+    else:
+        y=HEIGHT
+        dy = random.uniform(-1*s,0)
+    red = random.randint(0, 255)
+    green = random.randint(0, 255)
+    blue = random.randint(0, 255)
+    return (Circle(x, y, rad, red, green, blue, 2, dx, dy))
+
+for i in range(num):
+    circles.append(newCircle())
+
+# wasd controls
+player = Player(400, 300, WASD=True)
+
+#game loop
+running = True
+while running:
+    dnum = score/4000
+    if (pygame.key.get_pressed()[pygame.K_u]) and upgrades > 0 and player.health>0:
+        upgrades -= 1
+        progress = grant_powerup(player, progress)
+    if (random.randint(0,100)>(100-dnum)):
+        circles.append(newCircle())
+        
+    # UFOs
+    ufo_chance = int(score / 10) # chance is small but goes up
+    if random.randint(0, 10000) < ufo_chance:
+        ufos.append(UFO(random.choice([-50, WIDTH+50]), random.choice([-50, HEIGHT+50])))
+
+    for event in pygame.event.get():
+        if event.type == pygame.QUIT:
+            running = False
+
+    if player.health > 0:
+        score += 10 / 60
+        player.update(None)
+        
+        for moon in moons:
+            moon.update_orbit(player.rect.centerx, player.rect.centery)
+            
+        for ufo in ufos:
+            ufo.update(player, circles)
+
+        # shot speed
+        if shoot_cooldown > 0:
+            shoot_cooldown -= 1
+            
+        front_x = player.x + math.cos(player.angle) * 24
+        front_y = player.y + math.sin(player.angle) * 24
+
+        if pygame.mouse.get_pressed()[0] and shoot_cooldown == 0:
+            mx, my = pygame.mouse.get_pos()
+            # shots spread
+            start_angle = -0.1 * (player.spread - 1)
+            for b_idx in range(player.spread):
+                offset = start_angle + (0.2 * b_idx if player.spread > 1 else 0)
+                bullets.append(Bullet(front_x, front_y, mx, my, offset, player.bulletsize))
+            shoot_cooldown = player.cooldown_max
+
+        if missile_cooldown > 0:
+            missile_cooldown -= 1
+            
+        #missiles
+        if pygame.mouse.get_pressed()[0] and missile_cooldown == 0:
+            mx, my = pygame.mouse.get_pos()
+            bullets.append(Missile(front_x, front_y, mx, my))
+            missile_cooldown = player.cooldown_max*2.5
+
+
+        missiles = [b for b in bullets if isinstance(b, Missile)]
+        for i in range(len(missiles)):
+            for j in range(i + 1, len(missiles)):
+                m1 = missiles[i]
+                m2 = missiles[j]
+                x_dist = m2.x - m1.x
+                y_dist = m2.y - m1.y
+                dist = math.hypot(x_dist, y_dist)
+                min_dist = m1.rad + m2.rad
+                if dist < min_dist:
+                    if dist == 0:
+                        nx, ny = 1.0, 0.0
+                        dist = 1.0
+                    else:
+                        nx = x_dist / dist
+                        ny = y_dist / dist
+                    overlap = min_dist - dist
+                    m1.x -= nx * overlap * 0.5
+                    m1.y -= ny * overlap * 0.5
+                    m2.x += nx * overlap * 0.5
+                    m2.y += ny * overlap * 0.5
+                    relative_x = m2.dx - m1.dx
+                    relative_y = m2.dy - m1.dy
+                    speed_along_normal = relative_x * nx + relative_y * ny
+                    if speed_along_normal < 0:
+                        m1.dx += speed_along_normal * nx
+                        m1.dy += speed_along_normal * ny
+                        m2.dx -= speed_along_normal * nx
+                        m2.dy -= speed_along_normal * ny
+
+        # collisions
+        all_targets = circles + ufos
+        for bullet in bullets[:]:
+            bullet.move()
+            if bullet.x < 0 or bullet.x > WIDTH or bullet.y < 0 or bullet.y > HEIGHT:
+                bullet.health -= 1
+                if bullet.health <= 0:
+                    bullets.remove(bullet)
+                continue
+            
+            for circle in all_targets[:]:
+                if math.hypot(bullet.x - circle.x, bullet.y - circle.y) < circle.rad + bullet.rad:
+                    if bullet in bullets:
+                        bullet.health -= 1
+                        if bullet.health <= 0:
+                            bullets.remove(bullet)
+
+                    if circle in moons:
+                        circle.hp -= 1
+                        if circle.hp <= 0:
+                            moons.remove(circle)
+                            score += 5
+                    elif circle in ufos:
+                        circle.hp -= 10
+                        if circle.hp <= 0:
+                            ufos.remove(circle)
+                            score += 50
+                            if random.random() < progress:
+                                upgrades += 1
+
+                    elif circle in circles:
+                        circles.remove(circle)
+                        if random.random() < progress:
+                            upgrades += 1
+                        score += 5
+                        # split
+                        clone1 = circle.small_clone(circle.dx + random.uniform(-0.8, 0.8), circle.dy + random.uniform(-0.8, 0.8))
+                        if clone1:
+                            clone2 = circle.small_clone(circle.dx + random.uniform(-0.8, 0.8), circle.dy + random.uniform(-0.8, 0.8))
+                            circles.extend([clone1, clone2])
+                    break
+
+        # asteroid hits player
+        for circle in circles[:]:
+            if math.hypot(player.rect.centerx - circle.x, player.rect.centery - circle.y) < circle.rad + 16:
+                player.health -= 20 
+                circles.remove(circle)
+                if random.random() < max(.005, progress):
+                    upgrades += 1
+                # split; pass current v
+                clone1 = circle.small_clone(circle.dx + random.uniform(-0.8, 0.8), circle.dy + random.uniform(-0.8, 0.8))
+                if clone1:
+                    clone2 = circle.small_clone(circle.dx + random.uniform(-0.8, 0.8), circle.dy + random.uniform(-0.8, 0.8))
+                    circles.extend([clone1, clone2])
+                    
+        # UFO hits player
+        for ufo in ufos[:]:
+            if math.hypot(player.rect.centerx - ufo.x, player.rect.centery - ufo.y) < ufo.rad + 16:
+                player.health -= 50
+                ufos.remove(ufo)
+
+        # moon collisions with asteroids (asteroids bounce off moons)
+        for circle in circles:
+            for moon in moons:
+                x_dist = circle.x-moon.x
+                y_dist = circle.y-moon.y
+                dist = math.hypot(x_dist, y_dist)
+                min_dist = circle.rad + moon.rad
+                if dist < min_dist:
+                    if dist == 0:
+                        nx, ny = 1.0, 0.0
+                        dist = 1.0
+                    else:
+                        nx = x_dist/dist
+                        ny = y_dist/dist
+                    
+                    # asteroids collide with moons
+                    overlap = min_dist - dist
+                    circle.x += nx*overlap
+                    circle.y += ny*overlap
+                    # bounce asteroid velocity away
+                    dot = circle.dx * nx + circle.dy * ny
+                    if dot < 0:
+                        circle.dx -= (1 + E) * dot * nx
+                        circle.dy -= (1 + E) * dot * ny
+
+    # update positions
+    for i, circle in enumerate(circles):
+        circle.move()
+        if circle.x - circle.rad < -1*circle.rad:
+            circles[i] = newCircle()
+        elif circle.x + circle.rad > WIDTH+circle.rad:
+            circles[i] = newCircle()
+
+        if circle.y - circle.rad < -1*circle.rad:
+            circles[i] = newCircle()
+        elif circle.y + circle.rad > HEIGHT+circle.rad:
+            circles[i] = newCircle()
+
+    # iterating through circles each circle
+    for i in range(len(circles)):
+        for j in range(i + 1, len(circles)):
+            c1 = circles[i]
+            c2 = circles[j]
+            x_distance = c2.x - c1.x
+            y_distance = c2.y - c1.y
+            distance = math.sqrt(x_distance**2 + y_distance**2)
+            minimum_distance = c1.rad + c2.rad
+
+
+            # collisions between circles
+            if distance < minimum_distance:
+                if distance == 0:
+                    angle = random.random() * math.tau
+                    nx = math.cos(angle)
+                    ny = math.sin(angle)
+                    distance = 1
+                else:
+                    nx = x_distance / distance
+                    ny = y_distance / distance
+
+                # ball separation 
+                overlap = minimum_distance - distance
+                total_mass = c1.mass + c2.mass
+                c1.x -= nx*overlap * (c2.mass/total_mass)
+                c1.y -= ny*overlap * (c2.mass/total_mass)
+                c2.x += nx*overlap * (c1.mass/total_mass)
+                c2.y += ny*overlap * (c1.mass/total_mass)
+
+                # velocities adjusted
+                relative_x = c2.dx-c1.dx
+                relative_y = c2.dy-c1.dy
+                speed_along_normal = relative_x*nx + relative_y*ny
+
+                if speed_along_normal < 0:
+                    j_impulse = -(1 + E) * speed_along_normal
+                    j_impulse /= (1 / c1.mass + 1 / c2.mass)
+                    impulse_x = j_impulse*nx
+                    impulse_y = j_impulse*ny
+
+                    c1.dx -= impulse_x/c1.mass
+                    c1.dy -= impulse_y/c1.mass
+                    c2.dx += impulse_x/c2.mass
+                    c2.dy += impulse_y/c2.mass
+
+                    # color stuff
+                    
+                    # R
+                    r_diff = (c2.red - c1.red) % 256
+                    if 0 < r_diff <= CONSUME_RANGE:
+                        c1.red = c2.red # ball 1 eating ball 2
+                    elif 256 - CONSUME_RANGE <= r_diff < 256:
+                        c2.red = c1.red # 
+                        
+                    # G
+                    g_diff = (c2.green - c1.green) % 256
+                    if 0 < g_diff <= CONSUME_RANGE:
+                        c1.green = c2.green
+                    elif 256 - CONSUME_RANGE <= g_diff < 256:
+                        c2.green = c1.green
+                        
+                    # B
+                    b_diff = (c2.blue - c1.blue) % 256
+                    if 0 < b_diff <= CONSUME_RANGE:
+                        c1.blue = c2.blue
+                    elif 256 - CONSUME_RANGE <= b_diff < 256:
+                        c2.blue = c1.blue
+
+    screen.fill((20, 24, 20))
+    for circle in circles:
+        circle.draw()
+
+    for moon in moons:
+        moon.draw()
+        
+    for ufo in ufos:
+        ufo.draw()
+    
+    for bullet in bullets:
+        bullet.draw()
+
+    # draw player
+    if player.health > 0:
+        player.draw()
+    else:
+        go_text = font.render("GAME OVER", True, (255, 50, 50))
+        screen.blit(go_text, (WIDTH // 2 - 75, HEIGHT // 2 - 20))
+
+    # health UI
+    hp_text = font.render(f"Health: {max(0, player.health)}", True, (255, 255, 255))
+    screen.blit(hp_text, (10, 10))
+
+    # score UI
+    score_text = font.render(f"Score: {int(score)}", True, (255, 255, 255))
+    screen.blit(score_text, (10, 45))
+    
+    # upgrade ui
+    upgrade_text = font.render(f"Upgrades: {int(upgrades)} [U to upgrade]", True, (255,255,255))
+    screen.blit(upgrade_text, (10,HEIGHT-30))
+
+    pygame.display.flip()
+    clock.tick(60)
+
+pygame.quit()
