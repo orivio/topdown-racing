@@ -13,6 +13,7 @@ ply_y = H*0.78
 max_hp = 100
 kmh_rate = 0.3
 dashL, dashG = 30, 30
+score = 0
 
 accl = 180
 brakeSpd = 450
@@ -33,6 +34,7 @@ laneSpd = 80
 rcvrVal = 0.8
 
 # 4 TYPES i labelled them in a dictionary fancy ik
+# that's aura bro^
 car_types = {
     "car": (36, 64, 60),
     "truck": (46, 84, 15),
@@ -58,6 +60,7 @@ bigFont = pygame.font.SysFont(None, 72)
 
 def main(): # game loop
     ply, cList, scrll = MainPlayer(), [], 0.0
+    global score
     while True:
         dt = min(clk.tick(60)/1000, 0.05)
         for ev in pygame.event.get():
@@ -77,6 +80,7 @@ def main(): # game loop
             spawn_cars(cList, ply, dt)
             collide_cars(cList)
             collide_player(ply, cList)
+            score+=1
 
         draw(ply, cList, scrll)
 
@@ -294,11 +298,12 @@ def draw_hud(player):
     draw_bar(pygame.Rect(10, 10, 200, 28), player.health/max_hp, (190, 40, 40), f"Health: {int(player.health)}")
     draw_bar(pygame.Rect(10, 46, 200, 28), player.speed/500, (40, 110, 190), f"{int(player.speed*kmh_rate)} km/h")
     draw_text(f"Upgrades: {player.upgrades}  [U to choose]", (150, H - 20))
+    draw_text(f"Score: {score}", (50, 300)) #temp location ofc
     if player.notice_timer > 0:
         draw_text(player.notice, (W/2, 30), (255, 220, 80))
     if player.health <= 0:
         draw_text("GAME OVER :((((((((((", (W/2, H/2), (255, 60, 60), big=True)
-        draw_text("Press R to try agian", (W/2, H/2 + 50))
+        draw_text("Press R to try again", (W/2, H/2 + 50))
 
 
 def draw_bar(rect, fraction, color, label):
