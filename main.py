@@ -212,8 +212,8 @@ def choose_upgrade(): #upgrade menu
     boxes = [pygame.Rect(50 + i*235, 200, 220, 300) for i in range(3)]
     names = random.sample(list(upgrades_dict), 3)
     while True:
-        pygame.draw.rect(scrn, (10, 25, 110), (30, 120, w - 60, H - 240))
-        draw_text("Choose an upgrade (click or press 1-3)", (w/2, 160))
+        pygame.draw.rect(scrn, (10, 25, 110), (30, 120, W - 60, H - 240))
+        draw_text("Choose an upgrade (click or press 1-3)", (W/2, 160))
         for box, name in zip(boxes, names):
             pygame.draw.rect(scrn, (85, 25, 100), box)
             draw_text(name, (box.centerx, box.y + 60))
@@ -295,10 +295,10 @@ def draw_hud(player):
     draw_bar(pygame.Rect(10, 46, 200, 28), player.speed/500, (40, 110, 190), f"{int(player.speed*kmh_rate)} km/h")
     draw_text(f"Upgrades: {player.upgrades}  [U to choose]", (150, H - 20))
     if player.notice_timer > 0:
-        draw_text(player.notice, (w/2, 30), (255, 220, 80))
+        draw_text(player.notice, (W/2, 30), (255, 220, 80))
     if player.health <= 0:
-        draw_text("GAME OVER :((((((((((", (w/2, H/2), (255, 60, 60), big=True)
-        draw_text("Press R to try agian", (w/2, H/2 + 50))
+        draw_text("GAME OVER :((((((((((", (W/2, H/2), (255, 60, 60), big=True)
+        draw_text("Press R to try agian", (W/2, H/2 + 50))
 
 
 def draw_bar(rect, fraction, color, label):
