@@ -43,16 +43,16 @@ car_types = {
 }
 
 upgrades_dict = { # upgrade dictionary 
-    "Repair": "-30 front & side",
+    "Repair": "+30 health",
     "Engine": "+25%",
     "Brakes": "+40%",
     "Handling": "+30%",
-    "Armor": "-20%",
+    "Armor": "+20%",
     "Reroll": "Try again",
 }
 
 scrn = pygame.display.set_mode((W, H))
-pygame.display.set_caption("Highway")
+pygame.display.set_caption("Modracing")
 clk = pygame.time.Clock()
 fnt = pygame.font.SysFont(None, 26)
 bigFont = pygame.font.SysFont(None, 72)
